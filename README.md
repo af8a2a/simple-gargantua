@@ -4,9 +4,16 @@
 
 ## 特性
 
-- **Kerr 时空**：可调自旋 \(a/M \in [0, 0.99]\)；视界 \(r_+\)、ISCO、光子轨道随自旋变化
-- **Hamiltonian 测地线**：Cartesian Kerr–Schild 坐标，状态 \((x^\mu, p_\mu)\)，RK4 积分  
-  \(\mathrm{d}x^\alpha/\mathrm{d}\lambda = g^{\alpha\beta}p_\beta\)，\(\mathrm{d}p_i/\mathrm{d}\lambda = -\tfrac12 \partial_i g^{\alpha\beta}p_\alpha p_\beta\)  
+- **Kerr 时空**：可调自旋 $a/M \in [0, 0.99]$；视界 $r_+$、ISCO、光子轨道随自旋变化
+- **Hamiltonian 测地线**：Cartesian Kerr–Schild 坐标，状态 $(x^\mu, p_\mu)$，RK4 积分
+
+  $$
+  \frac{\mathrm{d}x^\alpha}{\mathrm{d}\lambda} = g^{\alpha\beta} p_\beta,
+  \qquad
+  \frac{\mathrm{d}p_i}{\mathrm{d}\lambda}
+  = -\frac{1}{2}\,\partial_i g^{\alpha\beta}\, p_\alpha p_\beta
+  $$
+
   （形式参考 Blacklight，[arXiv:2203.15963](https://arxiv.org/abs/2203.15963)）
 - **临界区 / 高阶像**：透镜带自适应步长、半轨道数分层的高阶盘像、解析光子环  
   （思路参考 AART，[arXiv:2211.07469](https://arxiv.org/abs/2211.07469)）
@@ -65,7 +72,7 @@ scripts/            # 构建与 Playwright 验证
 
 ## 技术说明
 
-- 几何单位：\(r_s = 2M = 1\)，场景中自旋沿 \(+Y\)，Kerr–Schild 内部沿 \(+z\)
+- 几何单位：$r_s = 2M = 1$，场景中自旋沿 $+Y$，Kerr–Schild 内部沿 $+z$
 - 光线自相机射入场景（与从源到相机的测地线同路径）
 - 帧率不足时会自动降低渲染分辨率
 
