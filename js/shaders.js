@@ -24,11 +24,12 @@ uniform float uSteps;
 uniform float uGlow;
 uniform float uStarDensity;
 
-// Units: rs = 2M = 1  →  M = 0.5. Spin axis = +Y, equatorial disk = XZ.
+// Units: rs = 2M = 1 → M = 0.5.
+// Visual frame: spin +Y, disk in XZ.
+// Kerr–Schild / Blacklight frame: spin +Z, disk in XY (y↔z swap).
 const float M = 0.5;
 const float RS = 1.0;
-const float PI = 3.14159265359;
-const int MAX_STEPS = 768;
+const int MAX_STEPS = 512;
 
 float hash13(vec3 p) {
   p = fract(p * 0.1031);
@@ -70,7 +71,6 @@ float horizonR(float aStar) {
   return M * (1.0 + sqrt(max(1.0 - aStar * aStar, 0.0)));
 }
 
-// Bardeen–Press–Teukolsky prograde ISCO, returned in same length units as r
 float iscoR(float aStar) {
   aStar = clamp(abs(aStar), 0.0, 0.998);
   float aa = aStar * aStar;
@@ -78,15 +78,18 @@ float iscoR(float aStar) {
                     (pow(1.0 + aStar, 1.0 / 3.0) + pow(max(1.0 - aStar, 0.0), 1.0 / 3.0));
   float z2 = sqrt(3.0 * aa + z1 * z1);
   float term = max((3.0 - z1) * (3.0 + z1 + 2.0 * z2), 0.0);
-  float rM = 3.0 + z2 - sqrt(term); // in units of M
+  float rM = 3.0 + z2 - sqrt(term);
   return max(rM * M, horizonR(aStar) + 0.08);
 }
 
-// Prograde equatorial photon-orbit radius
 float photonOrbitR(float aStar) {
   float aS = clamp(aStar, 0.0, 0.998);
   return 2.0 * M * (1.0 + cos((2.0 / 3.0) * acos(clamp(-aS, -1.0, 1.0))));
 }
+
+// Visual (spin +Y) ↔ Kerr–Schild (spin +Z):  ks = (vis.x, vis.z, vis.y)
+vec3 visToKs(vec3 v) { return vec3(v.x, v.z, v.y); }
+vec3 ksToVisFixed(vec3 k) { return vec3(k.x, k.z, k.y); }
 
 vec3 diskChroma(float kelvin) {
   float t = clamp(kelvin, 1800.0, 28000.0);
@@ -144,27 +147,152 @@ vec3 starfield(vec3 dir) {
   return col * uStarDensity;
 }
 
-// Boyer–Lindquist with spin along +Y
-// y = r cosθ,  x = √(r²+a²) sinθ cosφ,  z = √(r²+a²) sinθ sinφ
-void cartToBL(vec3 p, float a, out float r, out float th, out float ph) {
-  float aa = a * a;
-  float rho2 = p.x * p.x + p.z * p.z;
-  float y = p.y;
-  float A = rho2 + y * y - aa;
-  float r2 = 0.5 * (A + sqrt(max(A * A + 4.0 * aa * y * y, 0.0)));
-  r = sqrt(max(r2, 1e-8));
-  th = acos(clamp(y / r, -1.0, 1.0));
-  ph = atan(p.z, p.x);
+// ---------------------------------------------------------------------------
+// Cartesian Kerr–Schild (Blacklight arXiv:2203.15963, spin along +z)
+// g_{αβ} = η_{αβ} + f l_α l_β
+// g^{αβ} = η^{αβ} - f l^α l^β
+// f = 2Mr³/(r⁴+a²z²)
+// l^α = (-1, (rx+ay)/(r²+a²), (ry-ax)/(r²+a²), z/r)
+// ---------------------------------------------------------------------------
+
+// Inverse metric as rows: row[α][β] = g^{αβ}
+void kerrSchildGinv(vec3 pos, float a, out vec4 rowT, out vec4 rowX, out vec4 rowY, out vec4 rowZ) {
+  float x = pos.x;
+  float y = pos.y;
+  float z = pos.z;
+  float a2 = a * a;
+  float R2 = x * x + y * y + z * z;
+  float S = R2 - a2;
+  float T = sqrt(max(S * S + 4.0 * a2 * z * z, 1e-12));
+  float r2 = max(0.5 * (S + T), 1e-10);
+  float r = sqrt(r2);
+  float r3 = r2 * r;
+  float r4 = r2 * r2;
+  float f = 2.0 * M * r3 / max(r4 + a2 * z * z, 1e-12);
+
+  float den = r2 + a2;
+  float lx = (r * x + a * y) / den;
+  float ly = (r * y - a * x) / den;
+  float lz = z / max(r, 1e-6);
+  // contravariant null vector l^α = (-1, lx, ly, lz)
+  float l0 = -1.0;
+  float l1 = lx;
+  float l2 = ly;
+  float l3 = lz;
+
+  // g^{αβ} = η^{αβ} - f l^α l^β,  η = diag(-1,1,1,1)
+  rowT = vec4(-1.0 - f * l0 * l0, 0.0 - f * l0 * l1, 0.0 - f * l0 * l2, 0.0 - f * l0 * l3);
+  rowX = vec4(0.0 - f * l1 * l0, 1.0 - f * l1 * l1, 0.0 - f * l1 * l2, 0.0 - f * l1 * l3);
+  rowY = vec4(0.0 - f * l2 * l0, 0.0 - f * l2 * l1, 1.0 - f * l2 * l2, 0.0 - f * l2 * l3);
+  rowZ = vec4(0.0 - f * l3 * l0, 0.0 - f * l3 * l1, 0.0 - f * l3 * l2, 1.0 - f * l3 * l3);
 }
 
-vec3 blToCartesian(float r, float th, float ph, float a) {
-  float st = sin(th);
-  float ct = cos(th);
-  float Rbar = sqrt(r * r + a * a);
-  return vec3(Rbar * st * cos(ph), r * ct, Rbar * st * sin(ph));
+vec4 ginvApply(vec4 rowT, vec4 rowX, vec4 rowY, vec4 rowZ, vec4 p) {
+  return vec4(dot(rowT, p), dot(rowX, p), dot(rowY, p), dot(rowZ, p));
 }
 
-// Kerr thin disk at equatorial BL radius r, azimuth φ, spin a
+float ksRadius(vec3 pos, float a) {
+  float a2 = a * a;
+  float R2 = dot(pos, pos);
+  float S = R2 - a2;
+  float T = sqrt(max(S * S + 4.0 * a2 * pos.z * pos.z, 0.0));
+  return sqrt(max(0.5 * (S + T), 0.0));
+}
+
+// Hamiltonian RHS (Blacklight arXiv:2203.15963 Eq. 20) in Cartesian Kerr–Schild.
+// dx^α/dλ = g^{αβ} p_β
+// dp_i/dλ = -½ ∂_i g^{αβ} p_α p_β
+// Analytic ∂_i via g^{αβ} = η^{αβ} - f l^α l^β  ⇒
+//   ∂_i g^{αβ}p_αp_β = -(∂_i f)(l·p)² - 2f (l·p) ∂_i(l·p)
+void hamRhs(vec3 x, vec4 p, float a, out vec3 dx, out vec3 dpi) {
+  float x0 = x.x, x1 = x.y, x2 = x.z;
+  float a2 = a * a;
+  float R2 = x0 * x0 + x1 * x1 + x2 * x2;
+  float S = R2 - a2;
+  float T = sqrt(max(S * S + 4.0 * a2 * x2 * x2, 1e-12));
+  float r2 = max(0.5 * (S + T), 1e-10);
+  float r = sqrt(r2);
+  float r3 = r2 * r;
+  float r4 = r2 * r2;
+
+  vec3 dr = vec3(
+    x0 * (S + T) / (2.0 * r * max(T, 1e-8)),
+    x1 * (S + T) / (2.0 * r * max(T, 1e-8)),
+    x2 * (T + R2 + a2) / (2.0 * r * max(T, 1e-8))
+  );
+
+  float D = max(r4 + a2 * x2 * x2, 1e-12);
+  float f = 2.0 * M * r3 / D;
+  vec3 dD = 4.0 * r3 * dr;
+  dD.z += 2.0 * a2 * x2;
+  vec3 df = (2.0 * M) * (3.0 * r2 * dr * D - r3 * dD) / (D * D);
+
+  float den = r2 + a2;
+  vec3 dden = 2.0 * r * dr;
+  float l0 = -1.0;
+  float numx = r * x0 + a * x1;
+  float numy = r * x1 - a * x0;
+  float lx = numx / den;
+  float ly = numy / den;
+  float lz = x2 / max(r, 1e-6);
+
+  vec3 lx_g, ly_g, lz_g;
+  lx_g.x = ((dr.x * x0 + r) * den - numx * dden.x) / (den * den);
+  lx_g.y = ((dr.y * x0 + a) * den - numx * dden.y) / (den * den);
+  lx_g.z = ((dr.z * x0) * den - numx * dden.z) / (den * den);
+  ly_g.x = ((dr.x * x1 - a) * den - numy * dden.x) / (den * den);
+  ly_g.y = ((dr.y * x1 + r) * den - numy * dden.y) / (den * den);
+  ly_g.z = ((dr.z * x1) * den - numy * dden.z) / (den * den);
+  lz_g = vec3(
+    -x2 / (r * r) * dr.x,
+    -x2 / (r * r) * dr.y,
+    1.0 / r - x2 / (r * r) * dr.z
+  );
+
+  // Inverse metric rows g^{αβ} = η^{αβ} - f l^α l^β
+  vec4 l = vec4(l0, lx, ly, lz);
+  vec4 rowT = vec4(-1.0 - f * l.x * l.x, -f * l.x * l.y, -f * l.x * l.z, -f * l.x * l.w);
+  vec4 rowX = vec4(-f * l.y * l.x, 1.0 - f * l.y * l.y, -f * l.y * l.z, -f * l.y * l.w);
+  vec4 rowY = vec4(-f * l.z * l.x, -f * l.z * l.y, 1.0 - f * l.z * l.z, -f * l.z * l.w);
+  vec4 rowZ = vec4(-f * l.w * l.x, -f * l.w * l.y, -f * l.w * l.z, 1.0 - f * l.w * l.w);
+
+  dx = vec3(dot(rowX, p), dot(rowY, p), dot(rowZ, p));
+
+  float lp = l.x * p.x + l.y * p.y + l.z * p.z + l.w * p.w;
+  vec3 dlp = vec3(
+    lx_g.x * p.y + ly_g.x * p.z + lz_g.x * p.w,
+    lx_g.y * p.y + ly_g.y * p.z + lz_g.y * p.w,
+    lx_g.z * p.y + ly_g.z * p.z + lz_g.z * p.w
+  );
+  // dp_i = -½ ∂_i (g^{αβ}p_αp_β) = ½ [ (∂_i f)(l·p)² + 2f (l·p) ∂_i(l·p) ]
+  dpi = 0.5 * (df * lp * lp + 2.0 * f * dlp * lp);
+}
+
+// RK4 step on (x, p). p.w = p_t is conserved (stationary metric).
+void hamStep(inout vec3 x, inout vec4 p, float a, float dlam) {
+  vec3 k1x, k2x, k3x, k4x;
+  vec3 k1p, k2p, k3p, k4p;
+  vec3 xt;
+  vec4 pt;
+
+  hamRhs(x, p, a, k1x, k1p);
+  xt = x + 0.5 * dlam * k1x;
+  pt = p;
+  pt.xyz += 0.5 * dlam * k1p;
+  hamRhs(xt, pt, a, k2x, k2p);
+  xt = x + 0.5 * dlam * k2x;
+  pt = p;
+  pt.xyz += 0.5 * dlam * k2p;
+  hamRhs(xt, pt, a, k3x, k3p);
+  xt = x + dlam * k3x;
+  pt = p;
+  pt.xyz += dlam * k3p;
+  hamRhs(xt, pt, a, k4x, k4p);
+
+  x += (dlam / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
+  p.xyz += (dlam / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
+}
+
 vec3 sampleDiskKerr(float r, float phi, vec3 toObs, float aStar, float rIn, float rOut, float heightW) {
   if (r < rIn || r > rOut) return vec3(0.0);
 
@@ -177,6 +305,7 @@ vec3 sampleDiskKerr(float r, float phi, vec3 toObs, float aStar, float rIn, floa
   float lapse = sqrt(max(d / sigma, 0.02));
   float beta = clamp(abs(omega - omegaZ) * r / max(lapse, 0.08), 0.0, 0.94);
 
+  // Visual-frame prograde direction for spin +Y
   vec3 velDir = normalize(vec3(-sin(phi), 0.0, cos(phi)));
   vec3 nHat = -normalize(toObs + 1e-8);
   float gamma = 1.0 / sqrt(max(1.0 - beta * beta, 0.04));
@@ -198,7 +327,7 @@ vec3 sampleDiskKerr(float r, float phi, vec3 toObs, float aStar, float rIn, floa
 
   float radial = pow(rIn / r, 1.85);
   float beam = pow(gD, 3.6);
-  float intensity = radial * beam * gGrav * 0.55;
+  float intensity = radial * beam * gGrav * 0.72;
 
   float pattern = phi + omega * uTime * 3.4;
   float n = fbm(vec3(cos(pattern), sin(pattern), r * 1.65) * 2.35);
@@ -230,28 +359,48 @@ vec3 aces(vec3 x) {
 void main() {
   vec2 p = (2.0 * gl_FragCoord.xy - uResolution) / uResolution.y;
   float tanHalf = tan(uFov * 0.5);
-  vec3 dir = normalize(uCamForward + uCamRight * (p.x * tanHalf) + uCamUp * (p.y * tanHalf));
-  vec3 pos = uCamPos;
-  vec3 vel = dir;
+  vec3 dirVis = normalize(uCamForward + uCamRight * (p.x * tanHalf) + uCamUp * (p.y * tanHalf));
 
   float aStar = clamp(uSpin, 0.0, 0.998);
-  float aDim = aStar * M;
+  float aDim = aStar * M; // geometric spin parameter
   float rh = horizonR(aStar);
   float rIn = iscoR(aStar);
   float rOut = max(rIn + 7.5, 13.0);
   float rPh = photonOrbitR(aStar);
   float diskTh = 0.20;
 
-  // Conserved angular momentum about spin axis (+Y)
-  vec3 hv = cross(pos, vel);
-  float h2 = dot(hv, hv);
-  float Lz = hv.y;
+  // Kerr–Schild state (spin +z)
+  vec3 xKs = visToKs(uCamPos);
+  vec3 nKs = normalize(visToKs(dirVis));
+  float camR = max(ksRadius(xKs, aDim), rh + 1.0);
+
+  // Covariant null momentum at camera (Blacklight Eqs. 20, pinhole).
+  // Shoot future-directed photon into the scene: p_i ≈ n_i, solve null for p_t.
+  vec4 rT, rX, rY, rZ;
+  kerrSchildGinv(xKs, aDim, rT, rX, rY, rZ);
+  vec4 pSpatial = vec4(0.0, nKs.x, nKs.y, nKs.z);
+  // g^{αβ}p_αp_β = 0 with p_i fixed:
+  // A p_t² + B p_t + C = 0, A=g^{tt}, B=2 g^{ti}p_i, C=g^{ij}p_i p_j
+  float A = rT.x;
+  float B = 2.0 * (rT.y * nKs.x + rT.z * nKs.y + rT.w * nKs.z);
+  vec4 pTest = pSpatial;
+  float C = dot(pTest, ginvApply(rT, rX, rY, rZ, pTest));
+  float disc = max(B * B - 4.0 * A * C, 0.0);
+  float pt1 = (-B + sqrt(disc)) / (2.0 * A);
+  float pt2 = (-B - sqrt(disc)) / (2.0 * A);
+  // Future-directed with (−,+,+,+): p_t < 0 (energy E = −p_t > 0) at large r
+  float pt = (pt1 < 0.0) ? pt1 : pt2;
+  if (pt > 0.0) pt = min(pt1, pt2);
+
+  vec3 x = xKs;
+  vec4 pk = vec4(pt, nKs.x, nKs.y, nKs.z);
 
   vec3 color = vec3(0.0);
   float transmittance = 1.0;
   bool captured = false;
   float glow = 0.0;
   int diskHits = 0;
+  vec3 lastDirVis = dirVis;
 
   int steps = int(uSteps);
   if (steps > MAX_STEPS) steps = MAX_STEPS;
@@ -259,85 +408,77 @@ void main() {
   for (int i = 0; i < MAX_STEPS; i++) {
     if (i >= steps) break;
 
-    float r2 = dot(pos, pos);
-    float r = sqrt(max(r2, 1e-8));
-
-    // Kerr horizon + spin-asymmetric capture (retrograde falls in from farther out)
-    float spinAlign = Lz * aDim;
-    float rCap = rh + max(0.0, -spinAlign) * 0.22 + max(0.0, spinAlign) * (-0.04);
-    rCap = clamp(rCap, rh * 0.75, rh + 0.55);
-    if (r < rCap) {
-      captured = true;
+    float r = ksRadius(x, aDim);
+    if (!(r > 0.0) || r < rh * 1.02 || dot(x, x) > 2.5e3) {
+      captured = r < rh * 3.0;
       break;
     }
-    if (r > 46.0 && dot(pos, vel) > 0.0) break;
-
-    float stepSize = clamp(0.09 * r, 0.03, 0.7);
-    if (r < rh + 2.0) stepSize = min(stepSize, 0.05);
-    if (r < rPh + 1.5) stepSize = min(stepSize, 0.04);
-
-    // Null-geodesic bending (stable Cartesian) — Kerr spin added below
-    vec3 accel = -1.5 * h2 * pos / (r2 * r2 * max(r, 1e-6));
-
-    // Lense–Thirring frame dragging about +Y
-    if (aStar > 0.001) {
-      float omegaFD = 2.0 * M * aDim / max(r * r * r, 1e-4);
-      float fall = 1.0 / (1.0 + r * r * 0.08);
-      accel += 1.35 * omegaFD * cross(vec3(0.0, 1.0, 0.0), vel) * fall;
+    if (r > max(camR + 3.0, 40.0)) {
+      vec3 dxv, dpv;
+      hamRhs(x, pk, aDim, dxv, dpv);
+      if (dot(dxv, dxv) > 1e-12) lastDirVis = ksToVisFixed(normalize(dxv));
+      break;
     }
 
-    vec3 newVel = vel + accel * stepSize;
-    vec3 newPos = pos + newVel * stepSize;
-    vec3 delta = newPos - pos;
+    float dlam = clamp(0.28 * max(r - rh, 0.08), 0.025, 0.55);
+    if (r < rh + 1.5) dlam = min(dlam, 0.06);
+    if (r < rPh + 1.8) dlam = min(dlam, 0.07);
 
-    // Photon-ring glow near prograde photon orbit
+    vec3 xOldKs = x;
+    vec3 dxNow, dpNow;
+    hamRhs(x, pk, aDim, dxNow, dpNow);
+    if (dot(dxNow, dxNow) > 1e-12) lastDirVis = ksToVisFixed(normalize(dxNow));
+
+    hamStep(x, pk, aDim, dlam);
+    vec3 deltaKs = x - xOldKs;
+
+    // Photon-ring glow (prograde orbit radius)
     float drPh = abs(r - rPh);
     if (r > rh + 0.15 && r < rPh + 3.0) {
-      glow += exp(-drPh * drPh * 16.0) * stepSize * 0.13;
+      glow += exp(-drPh * drPh * 16.0) * dlam * 0.12;
     }
 
-    // Volumetric thin disk (y=0 slab) — additive, keeps lensed images visible
+    // Work in visual frame for the disk (spin +Y, plane y=0)
+    vec3 pOld = ksToVisFixed(xOldKs);
+    vec3 pNew = ksToVisFixed(x);
+    vec3 rayDirVis = length(deltaKs) > 1e-8 ? ksToVisFixed(normalize(deltaKs)) : dirVis;
+
+    // Volumetric thin disk
     {
-      float rho2 = newPos.x * newPos.x + newPos.z * newPos.z;
+      float rho2 = pNew.x * pNew.x + pNew.z * pNew.z;
       float rEq = sqrt(max(rho2 - aDim * aDim, 0.08));
-      float yAbs = abs(newPos.y);
+      float yAbs = abs(pNew.y);
       if (rEq > rIn && rEq < rOut && yAbs < diskTh * 3.2 && transmittance > 0.01) {
-        float fallY = exp(-(newPos.y * newPos.y) / (diskTh * diskTh));
-        float hitPh = atan(newPos.z, newPos.x);
-        vec3 rayDir = normalize(delta + 1e-8);
-        vec3 emission = sampleDiskKerr(rEq, hitPh, rayDir, aStar, rIn, rOut, fallY);
-        color += emission * fallY * 0.28 * stepSize * transmittance;
-        transmittance *= (1.0 - 0.05 * fallY);
+        float fallY = exp(-(pNew.y * pNew.y) / (diskTh * diskTh));
+        float hitPh = atan(pNew.z, pNew.x);
+        vec3 emission = sampleDiskKerr(rEq, hitPh, rayDirVis, aStar, rIn, rOut, fallY);
+        color += emission * fallY * 0.22 * dlam * transmittance;
+        transmittance *= (1.0 - 0.04 * fallY);
       }
     }
 
-    // Stronger primary plane hits
-    if (pos.y * newPos.y < 0.0 && diskHits < 5 && transmittance > 0.02) {
-      float s = clamp(pos.y / (pos.y - newPos.y), 0.0, 1.0);
-      vec3 hit = mix(pos, newPos, s);
+    // Primary plane crossings (visual y = 0)
+    if (pOld.y * pNew.y < 0.0 && diskHits < 5 && transmittance > 0.02) {
+      float s = clamp(pOld.y / (pOld.y - pNew.y), 0.0, 1.0);
+      vec3 hit = mix(pOld, pNew, s);
       float rho2 = hit.x * hit.x + hit.z * hit.z;
       float rEq = sqrt(max(rho2 - aDim * aDim, 0.08));
       if (rEq > rIn * 0.9 && rEq < rOut + 0.5) {
         float hitPh = atan(hit.z, hit.x);
-        vec3 rayDir = normalize(delta + 1e-8);
-        vec3 emission = sampleDiskKerr(rEq, hitPh, rayDir, aStar, rIn, rOut, 1.0);
+        vec3 emission = sampleDiskKerr(rEq, hitPh, rayDirVis, aStar, rIn, rOut, 1.0);
         float eMag = min(length(emission), 40.0);
         if (eMag > 1e-4) {
-          color += emission * 0.7 * transmittance;
-          transmittance *= (1.0 - clamp(eMag * 0.4, 0.1, 0.8));
+          color += emission * 0.65 * transmittance;
+          transmittance *= (1.0 - clamp(eMag * 0.38, 0.08, 0.8));
           diskHits += 1;
         }
       }
     }
-
-    pos = newPos;
-    vel = newVel;
   }
 
   if (!captured) {
-    color += starfield(normalize(vel)) * transmittance;
-    vec3 glowCol = vec3(1.0, 0.72, 0.28) * min(glow, 2.0) * uGlow * 0.32;
-    color += glowCol;
+    color += starfield(lastDirVis) * transmittance;
+    color += vec3(1.0, 0.72, 0.28) * min(glow, 2.0) * uGlow * 0.28;
   }
 
   color *= uExposure;
