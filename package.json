@@ -1,0 +1,15 @@
+{
+  "name": "gargantua",
+  "version": "1.0.0",
+  "description": "Real-time physically-inspired black hole visualization (three.js)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-standalone.mjs",
+    "serve": "python -m http.server 8765 --bind 127.0.0.1",
+    "verify": "node scripts/verify.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.63.0"
+  }
+}
