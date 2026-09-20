@@ -2,10 +2,10 @@ import * as THREE from '../lib/three.module.js';
 import { blackholeVertexShader, blackholeFragmentShader } from './shaders.js';
 
 const QUALITY = {
-  ultra: { steps: 420, scale: 1.0 },
-  high: { steps: 280, scale: 0.85 },
-  medium: { steps: 180, scale: 0.7 },
-  low: { steps: 100, scale: 0.5 },
+  ultra: { steps: 480, scale: 1.0 },
+  high: { steps: 320, scale: 0.85 },
+  medium: { steps: 200, scale: 0.7 },
+  low: { steps: 110, scale: 0.5 },
 };
 
 const M = 0.5;

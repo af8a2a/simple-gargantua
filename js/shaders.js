@@ -29,7 +29,25 @@ uniform float uStarDensity;
 // Kerr–Schild / Blacklight frame: spin +Z, disk in XY (y↔z swap).
 const float M = 0.5;
 const float RS = 1.0;
-const int MAX_STEPS = 512;
+const int MAX_STEPS = 640;
+
+// Kerr critical impact parameter (equatorial photon orbits, M=0.5 → b≈2.598 at a=0)
+float criticalB(float aStar) {
+  // Prograde / retrograde equatorial photon-orbit impact parameters
+  float b0 = 3.0 * sqrt(3.0) * M;
+  float bPro = b0 * (1.0 - 0.20 * aStar);
+  float bRet = b0 * (1.0 + 0.28 * aStar);
+  return 0.5 * (bPro + bRet);
+}
+
+float criticalBAz(float aStar, float az) {
+  float b0 = 3.0 * sqrt(3.0) * M;
+  float bPro = b0 * (1.0 - 0.20 * aStar);
+  float bRet = b0 * (1.0 + 0.28 * aStar);
+  // D-shaped critical curve: prograde side compressed (AART / GLM)
+  float t = 0.5 + 0.5 * cos(az);
+  return mix(bRet, bPro, t);
+}
 
 float hash13(vec3 p) {
   p = fract(p * 0.1031);
@@ -362,7 +380,7 @@ void main() {
   vec3 dirVis = normalize(uCamForward + uCamRight * (p.x * tanHalf) + uCamUp * (p.y * tanHalf));
 
   float aStar = clamp(uSpin, 0.0, 0.998);
-  float aDim = aStar * M; // geometric spin parameter
+  float aDim = aStar * M;
   float rh = horizonR(aStar);
   float rIn = iscoR(aStar);
   float rOut = max(rIn + 7.5, 13.0);
@@ -374,13 +392,23 @@ void main() {
   vec3 nKs = normalize(visToKs(dirVis));
   float camR = max(ksRadius(xKs, aDim), rh + 1.0);
 
-  // Covariant null momentum at camera (Blacklight Eqs. 20, pinhole).
-  // Shoot future-directed photon into the scene: p_i ≈ n_i, solve null for p_t.
+  // AART-style critical-curve proximity on the observer sky
+  // b = |x_cam × n| ≈ impact parameter for a distant pinhole camera
+  vec3 bvec = cross(uCamPos, dirVis);
+  float bmag = length(bvec);
+  float skyAz = atan(dirVis.z, dirVis.x);
+  float bCrit = criticalBAz(aStar, skyAz);
+  float dbCrit = abs(bmag - bCrit);
+  // Lensing band n=0…2: exponentially thin shells around the critical curve
+  float band0 = exp(-pow(dbCrit / 0.55, 2.0));
+  float band1 = exp(-pow(dbCrit / 0.18, 2.0));
+  float band2 = exp(-pow(dbCrit / 0.07, 2.0));
+  float skyCrit = max(band0, max(band1 * 0.85, band2 * 0.7));
+
+  // Covariant null momentum at camera (Blacklight Eq. 20, pinhole)
   vec4 rT, rX, rY, rZ;
   kerrSchildGinv(xKs, aDim, rT, rX, rY, rZ);
   vec4 pSpatial = vec4(0.0, nKs.x, nKs.y, nKs.z);
-  // g^{αβ}p_αp_β = 0 with p_i fixed:
-  // A p_t² + B p_t + C = 0, A=g^{tt}, B=2 g^{ti}p_i, C=g^{ij}p_i p_j
   float A = rT.x;
   float B = 2.0 * (rT.y * nKs.x + rT.z * nKs.y + rT.w * nKs.z);
   vec4 pTest = pSpatial;
@@ -388,7 +416,6 @@ void main() {
   float disc = max(B * B - 4.0 * A * C, 0.0);
   float pt1 = (-B + sqrt(disc)) / (2.0 * A);
   float pt2 = (-B - sqrt(disc)) / (2.0 * A);
-  // Future-directed with (−,+,+,+): p_t < 0 (energy E = −p_t > 0) at large r
   float pt = (pt1 < 0.0) ? pt1 : pt2;
   if (pt > 0.0) pt = min(pt1, pt2);
 
@@ -401,12 +428,16 @@ void main() {
   float glow = 0.0;
   int diskHits = 0;
   vec3 lastDirVis = dirVis;
+  float phiAcc = 0.0;          // accumulated |dφ| ≈ half-orbit counter
+  float shellAdapt = 0.0;      // running max of photon-shell proximity
 
   int steps = int(uSteps);
   if (steps > MAX_STEPS) steps = MAX_STEPS;
+  // AART: spend extra affine steps on rays in the critical / high-n bands
+  int stepBudget = int(clamp(float(steps) * (1.0 + 1.6 * skyCrit), float(steps), float(MAX_STEPS)));
 
   for (int i = 0; i < MAX_STEPS; i++) {
-    if (i >= steps) break;
+    if (i >= stepBudget) break;
 
     float r = ksRadius(x, aDim);
     if (!(r > 0.0) || r < rh * 1.02 || dot(x, x) > 2.5e3) {
@@ -420,9 +451,15 @@ void main() {
       break;
     }
 
+    // Photon-shell proximity (AART critical region): fine steps near r_ph
+    float shell = exp(-pow((r - rPh) / 0.40, 2.0));
+    shellAdapt = max(shellAdapt, shell);
+    float adapt = clamp(max(skyCrit, shell), 0.0, 1.0);
+
     float dlam = clamp(0.28 * max(r - rh, 0.08), 0.025, 0.55);
-    if (r < rh + 1.5) dlam = min(dlam, 0.06);
-    if (r < rPh + 1.8) dlam = min(dlam, 0.07);
+    dlam = mix(dlam, 0.012 + 0.03 * max(r - rh, 0.0), adapt);
+    if (r < rh + 1.8) dlam = min(dlam, 0.045);
+    if (r < rPh + 1.2) dlam = min(dlam, 0.03);
 
     vec3 xOldKs = x;
     vec3 dxNow, dpNow;
@@ -432,44 +469,56 @@ void main() {
     hamStep(x, pk, aDim, dlam);
     vec3 deltaKs = x - xOldKs;
 
-    // Photon-ring glow (prograde orbit radius)
-    float drPh = abs(r - rPh);
-    if (r > rh + 0.15 && r < rPh + 3.0) {
-      glow += exp(-drPh * drPh * 16.0) * dlam * 0.12;
+    if (r > rh + 0.1 && r < rPh + 2.5) {
+      glow += exp(-pow((r - rPh) / 0.45, 2.0)) * dlam * 0.18;
     }
 
-    // Work in visual frame for the disk (spin +Y, plane y=0)
     vec3 pOld = ksToVisFixed(xOldKs);
     vec3 pNew = ksToVisFixed(x);
     vec3 rayDirVis = length(deltaKs) > 1e-8 ? ksToVisFixed(normalize(deltaKs)) : dirVis;
 
-    // Volumetric thin disk
+    // Half-orbit accumulator (AART layer index n ~ φ_acc / π)
+    {
+      vec3 cprod = cross(pOld, pNew);
+      float dphi = abs(cprod.y) / max(dot(pNew.xz, pNew.xz), 0.25);
+      phiAcc += dphi;
+    }
+
+    // Volumetric thin disk — keep optically thin so high-n layers survive
     {
       float rho2 = pNew.x * pNew.x + pNew.z * pNew.z;
       float rEq = sqrt(max(rho2 - aDim * aDim, 0.08));
       float yAbs = abs(pNew.y);
-      if (rEq > rIn && rEq < rOut && yAbs < diskTh * 3.2 && transmittance > 0.01) {
+      if (rEq > rIn && rEq < rOut && yAbs < diskTh * 3.2 && transmittance > 0.005) {
         float fallY = exp(-(pNew.y * pNew.y) / (diskTh * diskTh));
         float hitPh = atan(pNew.z, pNew.x);
         vec3 emission = sampleDiskKerr(rEq, hitPh, rayDirVis, aStar, rIn, rOut, fallY);
-        color += emission * fallY * 0.22 * dlam * transmittance;
-        transmittance *= (1.0 - 0.04 * fallY);
+        // Slightly stronger sampling in the critical band (higher-n image content)
+        float bandBoost = 1.0 + 1.4 * skyCrit + 0.8 * shell;
+        color += emission * fallY * 0.20 * dlam * bandBoost * transmittance;
+        transmittance *= (1.0 - 0.028 * fallY);
       }
     }
 
-    // Primary plane crossings (visual y = 0)
-    if (pOld.y * pNew.y < 0.0 && diskHits < 5 && transmittance > 0.02) {
+    // Plane crossings: label image order by accumulated half-orbits
+    if (pOld.y * pNew.y < 0.0 && diskHits < 10 && transmittance > 0.008) {
       float s = clamp(pOld.y / (pOld.y - pNew.y), 0.0, 1.0);
       vec3 hit = mix(pOld, pNew, s);
       float rho2 = hit.x * hit.x + hit.z * hit.z;
       float rEq = sqrt(max(rho2 - aDim * aDim, 0.08));
-      if (rEq > rIn * 0.9 && rEq < rOut + 0.5) {
+      if (rEq > rIn * 0.85 && rEq < rOut + 0.8) {
         float hitPh = atan(hit.z, hit.x);
         vec3 emission = sampleDiskKerr(rEq, hitPh, rayDirVis, aStar, rIn, rOut, 1.0);
         float eMag = min(length(emission), 40.0);
         if (eMag > 1e-4) {
-          color += emission * 0.65 * transmittance;
-          transmittance *= (1.0 - clamp(eMag * 0.38, 0.08, 0.8));
+          // AART demagnification e^{-nγ}; γ_eff ~ 0.9 per half-orbit, modulated by lensing band
+          float nLayer = floor(phiAcc / 3.14159265);
+          float demag = exp(-nLayer * 0.75);
+          float bandGain = 1.0 + 2.2 * band2 + 1.1 * band1 + 0.4 * band0;
+          float w = 0.55 * demag * bandGain * (1.0 + 0.5 * shellAdapt);
+          color += emission * w * transmittance;
+          // Soft opacity so n≥1/2 rings remain visible
+          transmittance *= (1.0 - clamp(eMag * 0.22, 0.03, 0.55));
           diskHits += 1;
         }
       }
@@ -478,7 +527,20 @@ void main() {
 
   if (!captured) {
     color += starfield(lastDirVis) * transmittance;
-    color += vec3(1.0, 0.72, 0.28) * min(glow, 2.0) * uGlow * 0.28;
+  }
+
+  // Analytical n→∞ critical curve (AART): thin photon-ring feature at b_crit
+  {
+    float ringW = mix(0.04, 0.10, aStar);
+    float ring = exp(-pow(dbCrit / ringW, 2.0));
+    float side = 0.75 + 0.45 * clamp(dirVis.x * 0.6 + 0.4, 0.0, 1.0);
+    color += vec3(1.0, 0.78, 0.38) * ring * uGlow * 0.38 * side * (0.35 + 0.65 * skyCrit);
+    // Subtle n=1 / n=2 subrings just outside the critical curve
+    float n1 = exp(-pow((dbCrit - 0.10) / 0.04, 2.0));
+    float n2 = exp(-pow((dbCrit - 0.19) / 0.028, 2.0));
+    color += vec3(1.0, 0.70, 0.32) * n1 * uGlow * 0.14;
+    color += vec3(1.0, 0.65, 0.28) * n2 * uGlow * 0.07;
+    color += vec3(1.0, 0.72, 0.28) * min(glow, 2.0) * uGlow * 0.20;
   }
 
   color *= uExposure;
