@@ -5,20 +5,20 @@
 ## 特性
 
 - **Kerr 时空**：可调自旋 $a/M \in [0, 0.99]$；视界 $r_+$、ISCO、光子轨道随自旋变化
-- **Hamiltonian 测地线**：Cartesian Kerr–Schild 坐标，状态 $(x^\mu, p_\mu)$，RK4 积分
-
-  $$
-  \frac{\mathrm{d}x^\alpha}{\mathrm{d}\lambda} = g^{\alpha\beta} p_\beta,
-  \qquad
-  \frac{\mathrm{d}p_i}{\mathrm{d}\lambda}
-  = -\frac{1}{2}\,\partial_i g^{\alpha\beta}\, p_\alpha p_\beta
-  $$
-
-  （形式参考 Blacklight，[arXiv:2203.15963](https://arxiv.org/abs/2203.15963)）
-- **临界区 / 高阶像**：透镜带自适应步长、半轨道数分层的高阶盘像、解析光子环  
-  （思路参考 AART，[arXiv:2211.07469](https://arxiv.org/abs/2211.07469)）
+- **Hamiltonian 测地线**：Cartesian Kerr–Schild 坐标，状态 $(x^\mu, p_\mu)$，用 RK4 积分下列方程（形式参考 Blacklight，[arXiv:2203.15963](https://arxiv.org/abs/2203.15963)）
+- **临界区 / 高阶像**：透镜带自适应步长、半轨道数分层的高阶盘像、解析光子环（思路参考 AART，[arXiv:2211.07469](https://arxiv.org/abs/2211.07469)）
 - **吸积盘物理**：Kerr 开普勒角速度、参考系拖曳、多普勒束与引力红移、黑体温度梯度
 - **离线单页**：`index.html` 内联 three.js 与着色器，Edge/Chrome 可直接打开
+
+测地线 Hamilton 形式（$\lambda$ 为仿射参数）：
+
+```math
+\frac{\mathrm{d}x^\alpha}{\mathrm{d}\lambda} = g^{\alpha\beta} p_\beta
+```
+
+```math
+\frac{\mathrm{d}p_i}{\mathrm{d}\lambda} = -\frac{1}{2} \partial_i g^{\alpha\beta} p_\alpha p_\beta
+```
 
 ## 运行
 
