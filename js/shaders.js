@@ -286,7 +286,7 @@ void hamRhs(vec3 x, vec4 p, float a, out vec3 dx, out vec3 dpi) {
   dpi = 0.5 * (df * lp * lp + 2.0 * f * dlp * lp);
 }
 
-// RK4 step on (x, p). p.w = p_t is conserved (stationary metric).
+// RK4 step on (x, p): p = (p_t, p_x, p_y, p_z). Keep p.x = p_t conserved.
 void hamStep(inout vec3 x, inout vec4 p, float a, float dlam) {
   vec3 k1x, k2x, k3x, k4x;
   vec3 k1p, k2p, k3p, k4p;
@@ -296,19 +296,19 @@ void hamStep(inout vec3 x, inout vec4 p, float a, float dlam) {
   hamRhs(x, p, a, k1x, k1p);
   xt = x + 0.5 * dlam * k1x;
   pt = p;
-  pt.xyz += 0.5 * dlam * k1p;
+  pt.yzw += 0.5 * dlam * k1p;
   hamRhs(xt, pt, a, k2x, k2p);
   xt = x + 0.5 * dlam * k2x;
   pt = p;
-  pt.xyz += 0.5 * dlam * k2p;
+  pt.yzw += 0.5 * dlam * k2p;
   hamRhs(xt, pt, a, k3x, k3p);
   xt = x + dlam * k3x;
   pt = p;
-  pt.xyz += dlam * k3p;
+  pt.yzw += dlam * k3p;
   hamRhs(xt, pt, a, k4x, k4p);
 
   x += (dlam / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
-  p.xyz += (dlam / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
+  p.yzw += (dlam / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
 }
 
 vec3 sampleDiskKerr(float r, float phi, vec3 toObs, float aStar, float rIn, float rOut, float heightW) {
