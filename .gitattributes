@@ -1,0 +1,4 @@
+* text=auto
+*.slang text eol=lf
+*.wgsl text eol=lf
+/shaders/generated/manifest.json text eol=lf

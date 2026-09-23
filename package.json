@@ -1,18 +1,27 @@
 {
   "name": "gargantua",
-  "version": "1.0.0",
-  "description": "Real-time physically-inspired black hole visualization (three.js)",
+  "version": "2.0.0",
+  "description": "WebGPU + Slang black hole reference cases with an independent CPU FP64 integrator",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node scripts/build-standalone.mjs",
-    "serve": "python -m http.server 8765 --bind 127.0.0.1",
-    "verify": "node scripts/verify.mjs",
-    "verify:integrator": "node scripts/verify-integrator.mjs",
-    "verify:redshift": "node scripts/verify-redshift.mjs",
-    "verify:ring": "node scripts/verify-ring.mjs",
-    "verify:termination": "node scripts/verify-termination.mjs",
-    "verify:absorption": "node scripts/verify-absorption.mjs"
+    "build": "node scripts/build-shaders.mjs",
+    "build:check": "node scripts/build-shaders.mjs --check",
+    "serve": "node scripts/serve.mjs",
+    "test": "node scripts/test.mjs",
+    "reference": "node scripts/reference.mjs",
+    "verify": "npm run build:check && npm test && node scripts/verify-webgpu.mjs",
+    "verify:webgpu": "node scripts/verify-webgpu.mjs",
+    "verify:integrator": "node --test tests/reference.test.mjs",
+    "legacy:build": "node legacy/scripts/build-standalone.mjs",
+    "legacy:verify:integrator": "node legacy/scripts/verify-integrator.mjs",
+    "legacy:verify:redshift": "node legacy/scripts/verify-redshift.mjs",
+    "legacy:verify:ring": "node legacy/scripts/verify-ring.mjs",
+    "legacy:verify:termination": "node legacy/scripts/verify-termination.mjs",
+    "legacy:verify:absorption": "node legacy/scripts/verify-absorption.mjs"
   },
   "dependencies": {
     "playwright": "^1.63.0"

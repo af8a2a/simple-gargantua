@@ -1,0 +1,10 @@
+{
+  "compiler": "2026.8",
+  "target": "wgsl",
+  "sourceHash": "fa897c268206e609016c16e143508d834b372a560ad289852eb5ec424501468d",
+  "outputs": {
+    "flatMain.wgsl": "2cc1e419568d65513fe976f442b09c54d2bd70680dd783bbd7cdad0ff65f20da",
+    "vertexMain.wgsl": "8be57f2a8ca056165134238d12b7918730bb1c54e2084946539290f8b553f012",
+    "fragmentMain.wgsl": "a84db263633166115a53d704913f4cfd198c511ad37d0bc3572a38c1f8681099"
+  }
+}

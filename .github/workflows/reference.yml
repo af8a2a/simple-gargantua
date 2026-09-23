@@ -1,0 +1,22 @@
+name: Reference contracts
+on: [push, pull_request]
+jobs:
+  cpu-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:check
+      - run: npm test
+      - run: npm run reference
+      - uses: actions/upload-artifact@v4
+        with:
+          name: case-00-reference
+          path: output/reference/case-00.json
+          if-no-files-found: error
+    # GPU acceptance is a separate real-device check: npm run verify:webgpu.
+    # A passing CPU job is not evidence of GPU correctness or frame rate.
