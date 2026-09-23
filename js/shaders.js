@@ -328,6 +328,40 @@ void hamStep(inout vec3 x, inout vec4 p, float a, float dlam) {
   p.yzw += (dlam / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
 }
 
+// Exhausting the integration budget leaves the ray unfinished, not escaped.
+const int RAY_UNFINISHED = 0;
+const int RAY_CAPTURED = 1;
+const int RAY_ESCAPED = 2;
+const int RAY_INVALID = 3;
+
+bool validRayState(vec3 pos, vec4 momentum) {
+  // Comparisons also reject NaN/Inf. The generous bound rejects numerical
+  // blow-ups before they can overflow the metric or contaminate emission.
+  return all(lessThan(abs(pos), vec3(1e8))) &&
+         all(lessThan(abs(momentum), vec4(1e8)));
+}
+
+int classifyRay(vec3 pos, vec4 momentum, float a, float horizon, float escapeR, out vec3 escapeDir) {
+  escapeDir = vec3(0.0);
+  if (!validRayState(pos, momentum)) return RAY_INVALID;
+  float r = ksRadius(pos, a);
+  if (!(r >= 0.0 && r < 1e8)) return RAY_INVALID;
+  if (r < horizon * 1.02) return RAY_CAPTURED;
+  if (r > escapeR) {
+    vec3 dx, dp;
+    hamRhs(pos, momentum, a, dx, dp);
+    if (!all(lessThan(abs(dx), vec3(1e8))) || !(dot(dx, dx) > 1e-12)) return RAY_INVALID;
+    // grad(r) is proportional to (r^2*x, r^2*y, (r^2+a^2)*z).
+    // Only an outward ray beyond the far boundary has confirmed escape.
+    vec3 radialGradient = vec3(r * r * pos.xy, (r * r + a * a) * pos.z);
+    if (dot(radialGradient, dx) > 0.0) {
+      escapeDir = normalize(dx);
+      return RAY_ESCAPED;
+    }
+  }
+  return RAY_UNFINISHED;
+}
+
 // Normalize a coordinate velocity dx^i/dt in the local Kerr-Schild metric.
 // For a static camera use velocity=0; invalid (non-timelike) flows return zero.
 vec4 coordinateFourVelocity(vec3 pos, vec3 velocity, float a) {
@@ -451,10 +485,11 @@ void main() {
 
   vec3 color = vec3(0.0);
   float transmittance = 1.0;
-  bool captured = false;
+  int rayStatus = RAY_UNFINISHED;
+  vec3 escapeDirKs = vec3(0.0);
+  float escapeR = max(camR + 3.0, 40.0);
   float glow = 0.0;
   int diskHits = 0;
-  vec3 lastDirVis = dirVis;
   float phiAcc = 0.0;          // accumulated |dφ| ≈ half-orbit counter
   float shellAdapt = 0.0;      // running max of photon-shell proximity
 
@@ -466,17 +501,9 @@ void main() {
   for (int i = 0; i < MAX_STEPS; i++) {
     if (i >= stepBudget) break;
 
+    rayStatus = classifyRay(x, pk, aDim, rh, escapeR, escapeDirKs);
+    if (rayStatus != RAY_UNFINISHED) break;
     float r = ksRadius(x, aDim);
-    if (!(r > 0.0) || r < rh * 1.02 || dot(x, x) > 2.5e3) {
-      captured = r < rh * 3.0;
-      break;
-    }
-    if (r > max(camR + 3.0, 40.0)) {
-      vec3 dxv, dpv;
-      hamRhs(x, pk, aDim, dxv, dpv);
-      if (dot(dxv, dxv) > 1e-12) lastDirVis = ksToVisFixed(normalize(dxv));
-      break;
-    }
 
     // Photon-shell proximity (AART critical region): fine steps near r_ph
     float shell = exp(-pow((r - rPh) / 0.40, 2.0));
@@ -491,11 +518,11 @@ void main() {
 
     vec3 xOldKs = x;
     vec4 pkOld = pk;
-    vec3 dxNow, dpNow;
-    hamRhs(x, pk, aDim, dxNow, dpNow);
-    if (dot(dxNow, dxNow) > 1e-12) lastDirVis = ksToVisFixed(normalize(dxNow));
-
     hamStep(x, pk, aDim, dlam);
+    if (!validRayState(x, pk)) {
+      rayStatus = RAY_INVALID;
+      break;
+    }
 
     if (r > rh + 0.1 && r < rPh + 2.5) {
       glow += exp(-pow((r - rPh) / 0.45, 2.0)) * dlam * 0.18;
@@ -556,8 +583,15 @@ void main() {
     }
   }
 
-  if (!captured) {
-    color += starfield(lastDirVis) * transmittance;
+  // The final permitted step can cross a boundary. Classify its endpoint
+  // even when the next loop iteration is skipped by either budget limit.
+  if (rayStatus == RAY_UNFINISHED) {
+    rayStatus = classifyRay(x, pk, aDim, rh, escapeR, escapeDirKs);
+  }
+  // Keep accumulated foreground emission for unfinished/invalid rays,
+  // but never invent a background direction before escape is confirmed.
+  if (rayStatus == RAY_ESCAPED) {
+    color += starfield(ksToVisFixed(escapeDirKs)) * transmittance;
   }
 
   // Artistic photon-ring glow around the approximate observer-screen contour

@@ -10,7 +10,8 @@
     "verify": "node scripts/verify.mjs",
     "verify:integrator": "node scripts/verify-integrator.mjs",
     "verify:redshift": "node scripts/verify-redshift.mjs",
-    "verify:ring": "node scripts/verify-ring.mjs"
+    "verify:ring": "node scripts/verify-ring.mjs",
+    "verify:termination": "node scripts/verify-termination.mjs"
   },
   "dependencies": {
     "playwright": "^1.63.0"
