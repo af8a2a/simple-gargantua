@@ -209,6 +209,23 @@ vec4 ginvApply(vec4 rowT, vec4 rowX, vec4 rowY, vec4 rowZ, vec4 p) {
   return vec4(dot(rowT, p), dot(rowX, p), dot(rowY, p), dot(rowZ, p));
 }
 
+// Past-directed covariant null momentum for a ray traced toward the source.
+// Keep dlam > 0 throughout tracing and radiative accumulation. The null root
+// below gives dt/dlam = A * p_t + B/2 = -sqrt(discriminant)/2 < 0.
+// This is equivalent to tracing the opposite, future-directed four-momentum
+// with negative affine steps; flipping only p_t would not preserve nullness.
+vec4 pastDirectedMomentum(vec3 pos, vec3 spatialMomentum, float a) {
+  vec4 rowT, rowX, rowY, rowZ;
+  kerrSchildGinv(pos, a, rowT, rowX, rowY, rowZ);
+  vec4 pSpatial = vec4(0.0, spatialMomentum);
+  float A = rowT.x;
+  float B = 2.0 * dot(rowT.yzw, spatialMomentum);
+  float C = dot(pSpatial, ginvApply(rowT, rowX, rowY, rowZ, pSpatial));
+  float discriminant = max(B * B - 4.0 * A * C, 0.0);
+  float pt = (-B - sqrt(discriminant)) / (2.0 * A);
+  return vec4(pt, spatialMomentum);
+}
+
 float ksRadius(vec3 pos, float a) {
   float a2 = a * a;
   float R2 = dot(pos, pos);
@@ -311,7 +328,7 @@ void hamStep(inout vec3 x, inout vec4 p, float a, float dlam) {
   p.yzw += (dlam / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
 }
 
-vec3 sampleDiskKerr(float r, float phi, vec3 toObs, float aStar, float rIn, float rOut, float heightW) {
+vec3 sampleDiskKerr(float r, float phi, vec3 rayToSource, float aStar, float rIn, float rOut, float heightW) {
   if (r < rIn || r > rOut) return vec3(0.0);
 
   float aDim = aStar * M;
@@ -325,7 +342,8 @@ vec3 sampleDiskKerr(float r, float phi, vec3 toObs, float aStar, float rIn, floa
 
   // Visual-frame prograde direction for spin +Y
   vec3 velDir = normalize(vec3(-sin(phi), 0.0, cos(phi)));
-  vec3 nHat = -normalize(toObs + 1e-8);
+  // Emission travels toward the observer, opposite the past-directed trace.
+  vec3 nHat = -normalize(rayToSource + 1e-8);
   float gamma = 1.0 / sqrt(max(1.0 - beta * beta, 0.04));
   float mu = dot(velDir, nHat);
   float gD = clamp(1.0 / max(gamma * (1.0 - beta * mu), 1e-3), 0.14, 3.2);
@@ -405,22 +423,9 @@ void main() {
   float band2 = exp(-pow(dbCrit / 0.07, 2.0));
   float skyCrit = max(band0, max(band1 * 0.85, band2 * 0.7));
 
-  // Covariant null momentum at camera (Blacklight Eq. 20, pinhole)
-  vec4 rT, rX, rY, rZ;
-  kerrSchildGinv(xKs, aDim, rT, rX, rY, rZ);
-  vec4 pSpatial = vec4(0.0, nKs.x, nKs.y, nKs.z);
-  float A = rT.x;
-  float B = 2.0 * (rT.y * nKs.x + rT.z * nKs.y + rT.w * nKs.z);
-  vec4 pTest = pSpatial;
-  float C = dot(pTest, ginvApply(rT, rX, rY, rZ, pTest));
-  float disc = max(B * B - 4.0 * A * C, 0.0);
-  float pt1 = (-B + sqrt(disc)) / (2.0 * A);
-  float pt2 = (-B - sqrt(disc)) / (2.0 * A);
-  float pt = (pt1 < 0.0) ? pt1 : pt2;
-  if (pt > 0.0) pt = min(pt1, pt2);
-
+  // Backtrace from the camera toward the source with dt/dlam < 0.
   vec3 x = xKs;
-  vec4 pk = vec4(pt, nKs.x, nKs.y, nKs.z);
+  vec4 pk = pastDirectedMomentum(xKs, nKs, aDim);
 
   vec3 color = vec3(0.0);
   float transmittance = 1.0;
@@ -456,6 +461,7 @@ void main() {
     shellAdapt = max(shellAdapt, shell);
     float adapt = clamp(max(skyCrit, shell), 0.0, 1.0);
 
+    // Positive affine length: pk is past-directed, so coordinate time decreases.
     float dlam = clamp(0.28 * max(r - rh, 0.08), 0.025, 0.55);
     dlam = mix(dlam, 0.012 + 0.03 * max(r - rh, 0.0), adapt);
     if (r < rh + 1.8) dlam = min(dlam, 0.045);

@@ -57,6 +57,7 @@ npm run serve
 npm install          # 可选：Playwright 验证脚本
 npm run build        # 由 js/ + lib/ 重新生成自包含 index.html
 npm run verify       # 无头截图检查
+npm run verify:integrator -- --edge  # GLSL 守恒量、回溯方向与解析径向光线检查
 ```
 
 源码结构：
@@ -73,7 +74,7 @@ scripts/            # 构建与 Playwright 验证
 ## 技术说明
 
 - 几何单位：$r_s = 2M = 1$，场景中自旋沿 $+Y$，Kerr–Schild 内部沿 $+z$
-- 光线自相机射入场景（与从源到相机的测地线同路径）
+- 光线从相机向光源回溯：使用过去指向的零四动量与正仿射步长，满足 $dt/d\lambda < 0$；发射光朝向观察者的方向与回溯切向相反
 - 帧率不足时会自动降低渲染分辨率
 
 ## 许可
