@@ -6,7 +6,7 @@
 
 - **Kerr 时空**：可调自旋 $a/M \in [0, 0.99]$；视界 $r_+$、ISCO、光子轨道随自旋变化
 - **Hamiltonian 测地线**：Cartesian Kerr–Schild 坐标，状态 $(x^\mu, p_\mu)$，用 RK4 积分下列方程（形式参考 Blacklight，[arXiv:2203.15963](https://arxiv.org/abs/2203.15963)）
-- **临界区 / 高阶像**：透镜带自适应步长、半轨道数分层的高阶盘像、解析光子环（思路参考 AART，[arXiv:2211.07469](https://arxiv.org/abs/2211.07469)）
+- **临界区 / 高阶像**：透镜带自适应步长、半轨道数分层的高阶盘像、像平面近似光子环辉光（思路参考 AART，[arXiv:2211.07469](https://arxiv.org/abs/2211.07469)）
 - **吸积盘物理**：Kerr 开普勒角速度、参考系拖曳、多普勒束与引力红移、黑体温度梯度
 - **离线单页**：`index.html` 内联 three.js 与着色器，Edge/Chrome 可直接打开
 
@@ -59,6 +59,7 @@ npm run build        # 由 js/ + lib/ 重新生成自包含 index.html
 npm run verify       # 无头截图检查
 npm run verify:integrator -- --edge  # GLSL 守恒量、回溯方向与解析径向光线检查
 npm run verify:redshift -- --edge    # 静止/圆轨道频移、有限距离与亮度变换检查
+npm run verify:ring -- --edge        # 光子环与临界带绕自旋轴旋转不变性检查
 ```
 
 源码结构：
@@ -78,6 +79,7 @@ scripts/            # 构建与 Playwright 验证
 - 光线从相机向光源回溯：使用过去指向的零四动量与正仿射步长，满足 $dt/d\lambda < 0$；发射光朝向观察者的方向与回溯切向相反
 - 盘的频移统一按 $g=(p_\mu u^\mu_{\rm obs})/(p_\mu u^\mu_{\rm em})$ 计算：相机为当前位置的静止观察者，盘采用顺行 Kerr 圆轨道角速度；有限厚度内延拓该旋转律，并在采样位置归一化四速度
 - 盘亮度采用经验性的总辐射强度剖面，按 $I_{\rm obs}=g^4 I_{\rm em}$ 缩放，颜色温度按 $T_{\rm obs}=gT_{\rm em}$ 变换；RGB 调色仍为近似，非逐频谱辐射转移
+- 光子环叠加与临界区采样权重使用相机右/上基向量定义的像平面坐标，绕自旋轴旋转相机不会改变该轮廓；环半径仍采用经验近似，用于艺术辉光，不代表精确的 Kerr 临界曲线
 - 帧率不足时会自动降低渲染分辨率
 
 ## 许可

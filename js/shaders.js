@@ -31,7 +31,7 @@ const float M = 0.5;
 const float RS = 1.0;
 const int MAX_STEPS = 640;
 
-// Kerr critical impact parameter (equatorial photon orbits, M=0.5 → b≈2.598 at a=0)
+// Empirical ring-overlay radii in observer-screen coordinates (b0=3*sqrt(3)*M).
 float criticalB(float aStar) {
   // Prograde / retrograde equatorial photon-orbit impact parameters
   float b0 = 3.0 * sqrt(3.0) * M;
@@ -40,12 +40,12 @@ float criticalB(float aStar) {
   return 0.5 * (bPro + bRet);
 }
 
-float criticalBAz(float aStar, float az) {
+float criticalBAz(float aStar, float screenAz) {
   float b0 = 3.0 * sqrt(3.0) * M;
   float bPro = b0 * (1.0 - 0.20 * aStar);
   float bRet = b0 * (1.0 + 0.28 * aStar);
-  // D-shaped critical curve: prograde side compressed (AART / GLM)
-  float t = 0.5 + 0.5 * cos(az);
+  // Approximate prograde-side compression for the artistic glow overlay.
+  float t = 0.5 + 0.5 * cos(screenAz);
   return mix(bRet, bPro, t);
 }
 
@@ -427,11 +427,13 @@ void main() {
   vec3 nKs = normalize(visToKs(dirVis));
   float camR = max(ksRadius(xKs, aDim), rh + 1.0);
 
-  // AART-style critical-curve proximity on the observer sky
-  // b = |x_cam × n| ≈ impact parameter for a distant pinhole camera
-  vec3 bvec = cross(uCamPos, dirVis);
-  float bmag = length(bvec);
-  float skyAz = atan(dirVis.z, dirVis.x);
+  // Observer-screen coordinates rotate with the camera around the spin axis.
+  // This empirical overlay and its refinement bands share the same sky basis.
+  vec2 skyDir = vec2(dot(dirVis, uCamRight), dot(dirVis, uCamUp));
+  // Equivalent to |x_cam x dirVis| for this center-pointing camera.
+  float bmag = length(uCamPos) * length(skyDir);
+  // The screen center has no polar angle; avoid GLSL atan(0, 0).
+  float skyAz = dot(skyDir, skyDir) > 1e-12 ? atan(skyDir.y, skyDir.x) : 0.0;
   float bCrit = criticalBAz(aStar, skyAz);
   float dbCrit = abs(bmag - bCrit);
   // Lensing band n=0…2: exponentially thin shells around the critical curve
@@ -558,11 +560,11 @@ void main() {
     color += starfield(lastDirVis) * transmittance;
   }
 
-  // Analytical n→∞ critical curve (AART): thin photon-ring feature at b_crit
+  // Artistic photon-ring glow around the approximate observer-screen contour
   {
     float ringW = mix(0.04, 0.10, aStar);
     float ring = exp(-pow(dbCrit / ringW, 2.0));
-    float side = 0.75 + 0.45 * clamp(dirVis.x * 0.6 + 0.4, 0.0, 1.0);
+    float side = 0.75 + 0.45 * clamp(skyDir.x * 0.6 + 0.4, 0.0, 1.0);
     color += vec3(1.0, 0.78, 0.38) * ring * uGlow * 0.38 * side * (0.35 + 0.65 * skyCrit);
     // Subtle n=1 / n=2 subrings just outside the critical curve
     float n1 = exp(-pow((dbCrit - 0.10) / 0.04, 2.0));

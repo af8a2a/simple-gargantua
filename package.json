@@ -9,7 +9,8 @@
     "serve": "python -m http.server 8765 --bind 127.0.0.1",
     "verify": "node scripts/verify.mjs",
     "verify:integrator": "node scripts/verify-integrator.mjs",
-    "verify:redshift": "node scripts/verify-redshift.mjs"
+    "verify:redshift": "node scripts/verify-redshift.mjs",
+    "verify:ring": "node scripts/verify-ring.mjs"
   },
   "dependencies": {
     "playwright": "^1.63.0"
