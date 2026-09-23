@@ -328,42 +328,59 @@ void hamStep(inout vec3 x, inout vec4 p, float a, float dlam) {
   p.yzw += (dlam / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p);
 }
 
-vec3 sampleDiskKerr(float r, float phi, vec3 rayToSource, float aStar, float rIn, float rOut, float heightW) {
+// Normalize a coordinate velocity dx^i/dt in the local Kerr-Schild metric.
+// For a static camera use velocity=0; invalid (non-timelike) flows return zero.
+vec4 coordinateFourVelocity(vec3 pos, vec3 velocity, float a) {
+  float r = ksRadius(pos, a);
+  float r2 = r * r;
+  float a2 = a * a;
+  float f = 2.0 * M * r2 * r / max(r2 * r2 + a2 * pos.z * pos.z, 1e-12);
+  vec3 ell = vec3((r * pos.x + a * pos.y) / (r2 + a2),
+                  (r * pos.y - a * pos.x) / (r2 + a2), pos.z / r);
+  float lv = 1.0 + dot(ell, velocity);
+  float properTimeSquared = 1.0 - dot(velocity, velocity) - f * lv * lv;
+  if (!(properTimeSquared > 0.0)) return vec4(0.0);
+  return vec4(1.0, velocity) / sqrt(properTimeSquared);
+}
+
+float keplerOmega(float r, float a) {
+  return sqrt(M) / (pow(r, 1.5) + a * sqrt(M));
+}
+
+vec4 diskFourVelocity(vec3 pos, float orbitR, float a) {
+  // At fixed r and theta, d(x,y,z)/dphi=(-y,x,0) in Cartesian KS.
+  // Extend the equatorial rotation law through the finite disk height,
+  // normalizing at the actual sample position (off-plane flow is prescribed).
+  float omega = keplerOmega(orbitR, a);
+  return coordinateFourVelocity(pos, omega * vec3(-pos.y, pos.x, 0.0), a);
+}
+
+float frequencyShift(vec4 photonCov, vec4 emitterVelocity, float observerFrequency) {
+  // pk is past-directed: positive physical frequency is pk_mu * u^mu.
+  // The ratio includes gravity, transverse Doppler and orbital beaming once.
+  float emittedFrequency = dot(photonCov, emitterVelocity);
+  if (!(observerFrequency > 0.0) || !(emittedFrequency > 0.0)) return 0.0;
+  return observerFrequency / emittedFrequency;
+}
+
+float diskFrequencyShift(vec3 pos, vec4 photonCov, float orbitR, float a, float observerFrequency) {
+  return frequencyShift(photonCov, diskFourVelocity(pos, orbitR, a), observerFrequency);
+}
+
+vec3 sampleDiskKerr(float r, float phi, float g, float aStar, float rIn, float rOut, float heightW) {
   if (r < rIn || r > rOut) return vec3(0.0);
 
-  float aDim = aStar * M;
-  float sqM = sqrt(M);
-  float omega = sqM / (pow(max(r, 0.05), 1.5) + aDim * sqM);
-  float d = r * r - 2.0 * M * r + aDim * aDim;
-  float sigma = r * r + aDim * aDim;
-  float omegaZ = 2.0 * M * aDim * r / max(sigma * sigma, 1e-4);
-  float lapse = sqrt(max(d / sigma, 0.02));
-  float beta = clamp(abs(omega - omegaZ) * r / max(lapse, 0.08), 0.0, 0.94);
-
-  // Visual-frame prograde direction for spin +Y
-  vec3 velDir = normalize(vec3(-sin(phi), 0.0, cos(phi)));
-  // Emission travels toward the observer, opposite the past-directed trace.
-  vec3 nHat = -normalize(rayToSource + 1e-8);
-  float gamma = 1.0 / sqrt(max(1.0 - beta * beta, 0.04));
-  float mu = dot(velDir, nHat);
-  float gD = clamp(1.0 / max(gamma * (1.0 - beta * mu), 1e-3), 0.14, 3.2);
-
-  float rs_ = max(r, 0.2);
-  float sqR = sqrt(rs_);
-  float num = rs_ * sqR - 2.0 * M * sqR + aDim * sqM;
-  float inner = rs_ * sqR - 3.0 * M * sqR + 2.0 * aDim * sqM;
-  float den = pow(rs_, 0.75) * sqrt(max(inner, 1e-4));
-  float Eem = clamp(num / max(den, 1e-4), 0.05, 8.0);
-  float gGrav = clamp(1.0 / Eem, 0.08, 1.4);
-  float gTotal = clamp(gD * gGrav, 0.04, 2.6);
+  if (!(g > 0.0)) return vec3(0.0);
+  float omega = keplerOmega(r, aStar * M);
 
   float Tref = clamp(7200.0 * (3.0 / max(rIn, 0.6)), 4800.0, 14000.0);
   float T = Tref * pow(rIn / r, 0.75);
-  float Tobs = clamp(T * gTotal, 1800.0, 26000.0);
+  float Tobs = T * g;
 
   float radial = pow(rIn / r, 1.85);
-  float beam = pow(gD, 3.6);
-  float intensity = radial * beam * gGrav * 0.72;
+  // The radial profile is emitted bolometric intensity: I_obs = g^4 I_em.
+  // diskChroma only supplies the approximate color at T_obs = g T_em.
+  float intensity = radial * pow(g, 4.0) * 0.72;
 
   float pattern = phi + omega * uTime * 3.4;
   float n = fbm(vec3(cos(pattern), sin(pattern), r * 1.65) * 2.35);
@@ -375,10 +392,10 @@ vec3 sampleDiskKerr(float r, float phi, vec3 rayToSource, float aStar, float rIn
   float eout = 1.0 - smoothstep(rOut - 2.8, rOut, r);
   float thick = mix(0.35, 1.0, heightW);
 
-  vec3 chroma = diskChroma(Tobs * mix(0.85, 1.25, clamp(gD, 0.0, 2.0)));
+  vec3 chroma = diskChroma(Tobs);
   vec3 color = chroma * intensity * ein * eout * fil * n * thick * uDiskBrightness;
 
-  float hot = clamp((Tobs - 8500.0) / 7000.0, 0.0, 0.4) * clamp(gD, 0.0, 1.3);
+  float hot = clamp((Tobs - 8500.0) / 7000.0, 0.0, 0.4);
   color += vec3(1.0, 0.96, 0.88) * intensity * hot * ein * eout * thick * 0.35;
   return max(color, vec3(0.0));
 }
@@ -426,6 +443,9 @@ void main() {
   // Backtrace from the camera toward the source with dt/dlam < 0.
   vec3 x = xKs;
   vec4 pk = pastDirectedMomentum(xKs, nKs, aDim);
+  // Each rendered camera is static in KS coordinates, at its finite distance.
+  vec4 observerVelocity = coordinateFourVelocity(xKs, vec3(0.0), aDim);
+  float observerFrequency = dot(pk, observerVelocity);
 
   vec3 color = vec3(0.0);
   float transmittance = 1.0;
@@ -468,12 +488,12 @@ void main() {
     if (r < rPh + 1.2) dlam = min(dlam, 0.03);
 
     vec3 xOldKs = x;
+    vec4 pkOld = pk;
     vec3 dxNow, dpNow;
     hamRhs(x, pk, aDim, dxNow, dpNow);
     if (dot(dxNow, dxNow) > 1e-12) lastDirVis = ksToVisFixed(normalize(dxNow));
 
     hamStep(x, pk, aDim, dlam);
-    vec3 deltaKs = x - xOldKs;
 
     if (r > rh + 0.1 && r < rPh + 2.5) {
       glow += exp(-pow((r - rPh) / 0.45, 2.0)) * dlam * 0.18;
@@ -481,7 +501,6 @@ void main() {
 
     vec3 pOld = ksToVisFixed(xOldKs);
     vec3 pNew = ksToVisFixed(x);
-    vec3 rayDirVis = length(deltaKs) > 1e-8 ? ksToVisFixed(normalize(deltaKs)) : dirVis;
 
     // Half-orbit accumulator (AART layer index n ~ φ_acc / π)
     {
@@ -498,7 +517,8 @@ void main() {
       if (rEq > rIn && rEq < rOut && yAbs < diskTh * 3.2 && transmittance > 0.005) {
         float fallY = exp(-(pNew.y * pNew.y) / (diskTh * diskTh));
         float hitPh = atan(pNew.z, pNew.x);
-        vec3 emission = sampleDiskKerr(rEq, hitPh, rayDirVis, aStar, rIn, rOut, fallY);
+        float g = diskFrequencyShift(x, pk, rEq, aDim, observerFrequency);
+        vec3 emission = sampleDiskKerr(rEq, hitPh, g, aStar, rIn, rOut, fallY);
         // Slightly stronger sampling in the critical band (higher-n image content)
         float bandBoost = 1.0 + 1.4 * skyCrit + 0.8 * shell;
         color += emission * fallY * 0.20 * dlam * bandBoost * transmittance;
@@ -514,7 +534,10 @@ void main() {
       float rEq = sqrt(max(rho2 - aDim * aDim, 0.08));
       if (rEq > rIn * 0.85 && rEq < rOut + 0.8) {
         float hitPh = atan(hit.z, hit.x);
-        vec3 emission = sampleDiskKerr(rEq, hitPh, rayDirVis, aStar, rIn, rOut, 1.0);
+        // Interpolate momentum at the same crossing fraction as position.
+        vec4 pkHit = mix(pkOld, pk, s);
+        float g = diskFrequencyShift(visToKs(hit), pkHit, rEq, aDim, observerFrequency);
+        vec3 emission = sampleDiskKerr(rEq, hitPh, g, aStar, rIn, rOut, 1.0);
         float eMag = min(length(emission), 40.0);
         if (eMag > 1e-4) {
           // AART demagnification e^{-nγ}; γ_eff ~ 0.9 per half-orbit, modulated by lensing band
