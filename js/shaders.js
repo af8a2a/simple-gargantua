@@ -401,6 +401,30 @@ float diskFrequencyShift(vec3 pos, vec4 photonCov, float orbitR, float a, float 
   return frequencyShift(photonCov, diskFourVelocity(pos, orbitR, a), observerFrequency);
 }
 
+// Phenomenological grey absorption per unit fluid-frame length (1/rs).
+const float DISK_ABSORPTION = 0.28;
+
+float fluidFramePathLength(vec4 photonCov, vec4 fluidVelocity, float dlam) {
+  // Past-directed pk gives positive local frequency pk_mu*u^mu.
+  // Invariant under pk -> c*pk, dlam -> dlam/c (c > 0).
+  float frequency = dot(photonCov, fluidVelocity);
+  if (!(frequency > 0.0) || !(dlam > 0.0)) return 0.0;
+  return frequency * dlam;
+}
+
+vec2 volumeTransfer(float absorption, float pathLength) {
+  // Return (transmission, attenuated emission length) for constant j,alpha
+  // over this segment: T=e^-tau, integral_0^L e^(-alpha*l) dl.
+  if (!(pathLength > 0.0)) return vec2(1.0, 0.0);
+  float tau = max(absorption, 0.0) * pathLength;
+  float transmission = exp(-tau);
+  // Avoid cancellation in 1-exp(-tau) and use the transparent limit at tau=0.
+  float meanTransmission = tau < 0.01
+    ? 1.0 - tau * 0.5 + tau * tau / 6.0 - tau * tau * tau / 24.0
+    : (1.0 - transmission) / tau;
+  return vec2(transmission, pathLength * meanTransmission);
+}
+
 vec3 sampleDiskKerr(float r, float phi, float g, float aStar, float rIn, float rOut, float heightW) {
   if (r < rIn || r > rOut) return vec3(0.0);
 
@@ -538,20 +562,26 @@ void main() {
       phiAcc += dphi;
     }
 
-    // Volumetric thin disk — keep optically thin so high-n layers survive
+    // Midpoint quadrature for the finite-thickness disk. Emission and
+    // absorption both use length measured in the same local fluid frame.
     {
-      float rho2 = pNew.x * pNew.x + pNew.z * pNew.z;
+      vec3 xMidKs = 0.5 * (xOldKs + x);
+      vec4 pkMid = 0.5 * (pkOld + pk);
+      float rho2 = dot(xMidKs.xy, xMidKs.xy);
       float rEq = sqrt(max(rho2 - aDim * aDim, 0.08));
-      float yAbs = abs(pNew.y);
+      float yAbs = abs(xMidKs.z);
       if (rEq > rIn && rEq < rOut && yAbs < diskTh * 3.2 && transmittance > 0.005) {
-        float fallY = exp(-(pNew.y * pNew.y) / (diskTh * diskTh));
-        float hitPh = atan(pNew.z, pNew.x);
-        float g = diskFrequencyShift(x, pk, rEq, aDim, observerFrequency);
+        float fallY = exp(-(xMidKs.z * xMidKs.z) / (diskTh * diskTh));
+        float hitPh = atan(xMidKs.y, xMidKs.x);
+        vec4 fluidVelocity = diskFourVelocity(xMidKs, rEq, aDim);
+        float g = frequencyShift(pkMid, fluidVelocity, observerFrequency);
+        float pathLength = fluidFramePathLength(pkMid, fluidVelocity, dlam);
+        vec2 transfer = volumeTransfer(DISK_ABSORPTION * fallY, pathLength);
         vec3 emission = sampleDiskKerr(rEq, hitPh, g, aStar, rIn, rOut, fallY);
         // Slightly stronger sampling in the critical band (higher-n image content)
         float bandBoost = 1.0 + 1.4 * skyCrit + 0.8 * shell;
-        color += emission * fallY * 0.20 * dlam * bandBoost * transmittance;
-        transmittance *= (1.0 - 0.028 * fallY);
+        color += emission * fallY * 0.20 * transfer.y * bandBoost * transmittance;
+        transmittance *= transfer.x;
       }
     }
 
@@ -575,7 +605,8 @@ void main() {
           float bandGain = 1.0 + 2.2 * band2 + 1.1 * band1 + 0.4 * band0;
           float w = 0.55 * demag * bandGain * (1.0 + 0.5 * shellAdapt);
           color += emission * w * transmittance;
-          // Soft opacity so n≥1/2 rings remain visible
+          // Phenomenological surface opacity, applied once per crossing;
+          // this discrete layer is independent of the volume step length.
           transmittance *= (1.0 - clamp(eMag * 0.22, 0.03, 0.55));
           diskHits += 1;
         }
